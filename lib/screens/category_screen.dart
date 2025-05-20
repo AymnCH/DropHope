@@ -1,9 +1,12 @@
 import 'package:drophope/data/item.dart';
 import 'package:drophope/data/item_provider.dart';
+import 'package:drophope/screens/admin_screens/report.dart';
+import 'package:drophope/screens/admin_screens/report_provider.dart';
 import 'package:drophope/screens/messages_screen.dart';
 import 'package:drophope/screens/user_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 
@@ -273,6 +276,69 @@ class _CategoryScreenState extends State<CategoryScreen> {
     );
   }
 
+  void _showReportDialog(Item item, String reporterEmail) {
+    final TextEditingController reasonController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text("Report Item"),
+          content: SizedBox(
+            width: 400, // Increased width
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text("Item: ${item.title}"),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: reasonController,
+                  decoration: const InputDecoration(
+                    labelText: "Reason for Reporting",
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 5, // Increased height of TextField
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () {
+                if (reasonController.text.isNotEmpty) {
+                  final report = Report(
+                    reporterEmail: reporterEmail,
+                    itemId: item.id!,
+                    reason: reasonController.text,
+                  );
+                  Provider.of<ReportProvider>(
+                    context,
+                    listen: false,
+                  ).addReport(report);
+                  Navigator.of(dialogContext).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Report submitted")),
+                  );
+                } else {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(content: Text("Please provide a reason")),
+                  );
+                }
+              },
+              child: const Text("Submit"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = ItemProviderInherited.of(context);
@@ -295,308 +361,392 @@ class _CategoryScreenState extends State<CategoryScreen> {
                 .where((item) => item.category == widget.category)
                 .toList();
 
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(widget.category),
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: const AssetImage('assets/images/background.png'),
+              fit: BoxFit.cover,
+              colorFilter: ColorFilter.mode(
+                Colors.black.withOpacity(0.5), // Semi-transparent overlay
+                BlendMode.dstATop,
+              ),
             ),
           ),
-          body:
-              filteredItems.isEmpty
-                  ? const Center(
-                    child: Text(
-                      "No items in this category",
-                      style: TextStyle(fontSize: 18, color: Colors.grey),
-                    ),
-                  )
-                  : ListView.builder(
-                    padding: const EdgeInsets.all(16.0),
-                    itemCount: filteredItems.length,
-                    itemBuilder: (context, index) {
-                      final item = filteredItems[index];
-                      final isOwnItem =
-                          item.uploaderEmail == userProvider.email;
-                      debugPrint(
-                        'CategoryScreen: Item ${item.title}, uploaderEmail: ${item.uploaderEmail}, userEmail: ${userProvider.email}, isOwnItem: $isOwnItem',
-                      );
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: ListTile(
-                          leading:
-                              item.imagePath != null
-                                  ? item.imagePath!.startsWith('assets/')
-                                      ? Image.asset(
-                                        item.imagePath!,
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (
-                                          context,
-                                          error,
-                                          stackTrace,
-                                        ) {
-                                          return const Icon(
-                                            Icons.image_not_supported,
-                                          );
-                                        },
-                                      )
-                                      : Image.file(
-                                        File(item.imagePath!),
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (
-                                          context,
-                                          error,
-                                          stackTrace,
-                                        ) {
-                                          return const Icon(
-                                            Icons.image_not_supported,
-                                          );
-                                        },
-                                      )
-                                  : const Icon(Icons.image_not_supported),
-                          title: Text(item.title),
-                          subtitle: Text(item.description),
-                          onTap: () {
-                            showDialog(
-                              context: context,
-                              builder: (dialogContext) {
-                                return AlertDialog(
-                                  title: Text(item.title),
-                                  content: SingleChildScrollView(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(widget.category),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+              ),
+            ),
+            body:
+                filteredItems.isEmpty
+                    ? const Center(
+                      child: Text(
+                        "No items in this category",
+                        style: TextStyle(fontSize: 18, color: Colors.grey),
+                      ),
+                    )
+                    : ListView.builder(
+                      padding: const EdgeInsets.all(16.0),
+                      itemCount: filteredItems.length,
+                      itemBuilder: (context, index) {
+                        final item = filteredItems[index];
+                        final isOwnItem =
+                            item.uploaderEmail == userProvider.email;
+                        debugPrint(
+                          'CategoryScreen: Item ${item.title}, uploaderEmail: ${item.uploaderEmail}, userEmail: ${userProvider.email}, isOwnItem: $isOwnItem',
+                        );
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: ListTile(
+                            leading:
+                                item.imagePath != null
+                                    ? item.imagePath!.startsWith('assets/')
+                                        ? Image.asset(
+                                          item.imagePath!,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (
+                                            context,
+                                            error,
+                                            stackTrace,
+                                          ) {
+                                            return const Icon(
+                                              Icons.image_not_supported,
+                                            );
+                                          },
+                                        )
+                                        : Image.file(
+                                          File(item.imagePath!),
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (
+                                            context,
+                                            error,
+                                            stackTrace,
+                                          ) {
+                                            return const Icon(
+                                              Icons.image_not_supported,
+                                            );
+                                          },
+                                        )
+                                    : const Icon(Icons.image_not_supported),
+                            title: Text(item.title),
+                            subtitle: Text(item.description),
+                            onTap: () {
+                              showDialog(
+                                context: context,
+                                builder: (dialogContext) {
+                                  return AlertDialog(
+                                    titlePadding: const EdgeInsets.fromLTRB(
+                                      24,
+                                      24,
+                                      24,
+                                      0,
+                                    ),
+                                    title: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
                                       children: [
-                                        item.imagePath != null
-                                            ? GestureDetector(
-                                              onTap:
-                                                  () => _showFullImage(
-                                                    dialogContext,
-                                                    item.imagePath,
+                                        Expanded(
+                                          child: Text(
+                                            item.title,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        if (!isOwnItem)
+                                          ElevatedButton.icon(
+                                            onPressed: () {
+                                              if (userProvider.email == null) {
+                                                ScaffoldMessenger.of(
+                                                  dialogContext,
+                                                ).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Please log in to report an item',
+                                                    ),
                                                   ),
-                                              child:
-                                                  item.imagePath!.startsWith(
-                                                        'assets/',
-                                                      )
-                                                      ? FutureBuilder(
-                                                        future: precacheImage(
-                                                          AssetImage(
-                                                            item.imagePath!,
+                                                );
+                                                return;
+                                              }
+                                              Navigator.of(dialogContext).pop();
+                                              _showReportDialog(
+                                                item,
+                                                userProvider.email!,
+                                              );
+                                            },
+                                            icon: const Icon(
+                                              Icons.report,
+                                              color: Colors.white,
+                                              size: 18,
+                                            ),
+                                            label: const Text(
+                                              'Report',
+                                              style: TextStyle(fontSize: 14),
+                                            ),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.red,
+                                              foregroundColor: Colors.white,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 4,
+                                                  ),
+                                              minimumSize: const Size(0, 0),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    content: SingleChildScrollView(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          item.imagePath != null
+                                              ? GestureDetector(
+                                                onTap:
+                                                    () => _showFullImage(
+                                                      dialogContext,
+                                                      item.imagePath,
+                                                    ),
+                                                child:
+                                                    item.imagePath!.startsWith(
+                                                          'assets/',
+                                                        )
+                                                        ? FutureBuilder(
+                                                          future: precacheImage(
+                                                            AssetImage(
+                                                              item.imagePath!,
+                                                            ),
+                                                            dialogContext,
                                                           ),
-                                                          dialogContext,
-                                                        ),
-                                                        builder: (
-                                                          context,
-                                                          snapshot,
-                                                        ) {
-                                                          if (snapshot
-                                                                  .connectionState ==
-                                                              ConnectionState
-                                                                  .waiting) {
-                                                            return const SizedBox(
-                                                              height: 100,
-                                                              width: 100,
-                                                              child: Center(
-                                                                child:
-                                                                    CircularProgressIndicator(),
+                                                          builder: (
+                                                            context,
+                                                            snapshot,
+                                                          ) {
+                                                            if (snapshot
+                                                                    .connectionState ==
+                                                                ConnectionState
+                                                                    .waiting) {
+                                                              return const SizedBox(
+                                                                height: 100,
+                                                                width: 100,
+                                                                child: Center(
+                                                                  child:
+                                                                      CircularProgressIndicator(),
+                                                                ),
+                                                              );
+                                                            }
+                                                            if (snapshot
+                                                                    .error !=
+                                                                null) {
+                                                              debugPrint(
+                                                                'Error preloading image: ${snapshot.error}',
+                                                              );
+                                                              return const Icon(
+                                                                Icons
+                                                                    .image_not_supported,
+                                                                size: 100,
+                                                              );
+                                                            }
+                                                            return ConstrainedBox(
+                                                              constraints:
+                                                                  const BoxConstraints(
+                                                                    maxWidth:
+                                                                        300,
+                                                                    maxHeight:
+                                                                        100,
+                                                                  ),
+                                                              child: ClipRRect(
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      8.0,
+                                                                    ),
+                                                                child: Image.asset(
+                                                                  item.imagePath!,
+                                                                  fit:
+                                                                      BoxFit
+                                                                          .cover,
+                                                                  errorBuilder: (
+                                                                    context,
+                                                                    error,
+                                                                    stackTrace,
+                                                                  ) {
+                                                                    debugPrint(
+                                                                      'Error loading image in dialog: $error',
+                                                                    );
+                                                                    return const Icon(
+                                                                      Icons
+                                                                          .image_not_supported,
+                                                                      size: 100,
+                                                                    );
+                                                                  },
+                                                                ),
                                                               ),
                                                             );
-                                                          }
-                                                          if (snapshot.error !=
-                                                              null) {
+                                                          },
+                                                        )
+                                                        : Image.file(
+                                                          File(item.imagePath!),
+                                                          fit: BoxFit.cover,
+                                                          height: 100,
+                                                          width: 300,
+                                                          errorBuilder: (
+                                                            context,
+                                                            error,
+                                                            stackTrace,
+                                                          ) {
                                                             debugPrint(
-                                                              'Error preloading image: ${snapshot.error}',
+                                                              'Error loading image in dialog: $error',
                                                             );
                                                             return const Icon(
                                                               Icons
                                                                   .image_not_supported,
                                                               size: 100,
                                                             );
-                                                          }
-                                                          return ConstrainedBox(
-                                                            constraints:
-                                                                const BoxConstraints(
-                                                                  maxWidth: 300,
-                                                                  maxHeight:
-                                                                      100,
-                                                                ),
-                                                            child: ClipRRect(
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                    8.0,
-                                                                  ),
-                                                              child: Image.asset(
-                                                                item.imagePath!,
-                                                                fit:
-                                                                    BoxFit
-                                                                        .cover,
-                                                                errorBuilder: (
-                                                                  context,
-                                                                  error,
-                                                                  stackTrace,
-                                                                ) {
-                                                                  debugPrint(
-                                                                    'Error loading image in dialog: $error',
-                                                                  );
-                                                                  return const Icon(
-                                                                    Icons
-                                                                        .image_not_supported,
-                                                                    size: 100,
-                                                                  );
-                                                                },
-                                                              ),
-                                                            ),
-                                                          );
-                                                        },
-                                                      )
-                                                      : Image.file(
-                                                        File(item.imagePath!),
-                                                        fit: BoxFit.cover,
-                                                        height: 100,
-                                                        width: 300,
-                                                        errorBuilder: (
-                                                          context,
-                                                          error,
-                                                          stackTrace,
-                                                        ) {
-                                                          debugPrint(
-                                                            'Error loading image in dialog: $error',
-                                                          );
-                                                          return const Icon(
-                                                            Icons
-                                                                .image_not_supported,
-                                                            size: 100,
-                                                          );
-                                                        },
-                                                      ),
-                                            )
-                                            : const Icon(
-                                              Icons.image_not_supported,
-                                              size: 100,
-                                            ),
-                                        const SizedBox(height: 16),
-                                        Text(item.description),
-                                        const SizedBox(height: 16),
-                                        Text(
-                                          "Uploaded by: ${item.uploaderName}",
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        Text(
-                                          "Type: ${item.type}",
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        Text(
-                                          "Phone: ${item.phone ?? 'N/A'}",
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            if (!isOwnItem) ...[
-                                              ElevatedButton.icon(
-                                                onPressed: () async {
-                                                  final phone =
-                                                      item.phone ??
-                                                      '1234567890';
-                                                  final uri = Uri.parse(
-                                                    'tel:$phone',
-                                                  );
-                                                  if (await canLaunchUrl(uri)) {
-                                                    await launchUrl(uri);
-                                                  } else {
-                                                    ScaffoldMessenger.of(
-                                                      dialogContext,
-                                                    ).showSnackBar(
-                                                      const SnackBar(
-                                                        content: Text(
-                                                          'Could not launch phone call',
+                                                          },
                                                         ),
-                                                      ),
+                                              )
+                                              : const Icon(
+                                                Icons.image_not_supported,
+                                                size: 100,
+                                              ),
+                                          const SizedBox(height: 16),
+                                          Text(item.description),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            "Uploaded by: ${item.uploaderName}",
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          Text(
+                                            "Type: ${item.type}",
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          Text(
+                                            "Phone: ${item.phone ?? 'N/A'}",
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              if (!isOwnItem) ...[
+                                                ElevatedButton.icon(
+                                                  onPressed: () async {
+                                                    final phone =
+                                                        item.phone ??
+                                                        '1234567890';
+                                                    final uri = Uri.parse(
+                                                      'tel:$phone',
                                                     );
-                                                  }
-                                                },
-                                                icon: const Icon(Icons.phone),
-                                                label: const Text('Call'),
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: Colors.green,
-                                                  foregroundColor: Colors.white,
+                                                    if (await canLaunchUrl(
+                                                      uri,
+                                                    )) {
+                                                      await launchUrl(uri);
+                                                    } else {
+                                                      ScaffoldMessenger.of(
+                                                        dialogContext,
+                                                      ).showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            'Could not launch phone call',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  },
+                                                  icon: const Icon(Icons.phone),
+                                                  label: const Text('Call'),
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                        backgroundColor:
+                                                            Colors.green,
+                                                        foregroundColor:
+                                                            Colors.white,
+                                                      ),
                                                 ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              ElevatedButton.icon(
-                                                onPressed: () {
-                                                  Navigator.of(
-                                                    dialogContext,
-                                                  ).pop();
-                                                  widget.navigateToScreenAndSwitchTab(
-                                                    MessagesScreen(
-                                                      startNewConversationWith:
-                                                          item.uploaderName,
-                                                    ),
-                                                    4,
-                                                  );
-                                                },
-                                                icon: const Icon(Icons.chat),
-                                                label: const Text('Chat'),
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor:
-                                                      Colors.indigo,
-                                                  foregroundColor: Colors.white,
+                                                const SizedBox(width: 8),
+                                                ElevatedButton.icon(
+                                                  onPressed: () {
+                                                    Navigator.of(
+                                                      dialogContext,
+                                                    ).pop();
+                                                    widget.navigateToScreenAndSwitchTab(
+                                                      MessagesScreen(
+                                                        startNewConversationWith:
+                                                            item.uploaderName,
+                                                      ),
+                                                      4,
+                                                    );
+                                                  },
+                                                  icon: const Icon(Icons.chat),
+                                                  label: const Text('Chat'),
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                        backgroundColor:
+                                                            Colors.indigo,
+                                                        foregroundColor:
+                                                            Colors.white,
+                                                      ),
                                                 ),
-                                              ),
+                                              ],
+                                              if (isOwnItem)
+                                                ElevatedButton.icon(
+                                                  onPressed: () {
+                                                    Navigator.of(
+                                                      dialogContext,
+                                                    ).pop();
+                                                    _showEditDialog(item);
+                                                  },
+                                                  icon: const Icon(Icons.edit),
+                                                  label: const Text(
+                                                    'Edit Post',
+                                                  ),
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                        backgroundColor:
+                                                            Colors.blue,
+                                                        foregroundColor:
+                                                            Colors.white,
+                                                      ),
+                                                ),
                                             ],
-                                            if (isOwnItem)
-                                              ElevatedButton.icon(
-                                                onPressed: () {
-                                                  Navigator.of(
-                                                    dialogContext,
-                                                  ).pop();
-                                                  _showEditDialog(item);
-                                                },
-                                                icon: const Icon(Icons.edit),
-                                                label: const Text('Edit Post'),
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: Colors.blue,
-                                                  foregroundColor: Colors.white,
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () {
-                                        debugPrint('Close button pressed');
-                                        Navigator.of(dialogContext).pop();
-                                      },
-                                      child: const Text('Close'),
-                                    ),
-                                  ],
-                                );
-                              },
-                            );
-                          },
-                        ),
-                      );
-                    },
-                  ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () {
+                                          debugPrint('Close button pressed');
+                                          Navigator.of(dialogContext).pop();
+                                        },
+                                        child: const Text('Close'),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+          ),
         );
       },
     );

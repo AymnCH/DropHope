@@ -1,6 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart' as dev show debugPrint;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert'; // For utf8.encode
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
@@ -15,7 +19,7 @@ class DatabaseHelper {
     }
     dev.debugPrint('DatabaseHelper: Initializing new database');
     _database = await _initDatabase();
-    await _seedItemsIfEmpty();
+    await _seedDataIfEmpty();
     dev.debugPrint('DatabaseHelper: Database initialization complete');
     return _database!;
   }
@@ -26,7 +30,7 @@ class DatabaseHelper {
     dev.debugPrint('DatabaseHelper: Database path: $path');
     return await openDatabase(
       path,
-      version: 5, // Incremented version to force migration
+      version: 9, // Incremented version for new migration
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen:
@@ -35,27 +39,41 @@ class DatabaseHelper {
     );
   }
 
-  Future<void> _seedItemsIfEmpty() async {
+  Future<void> exportDatabase() async {
+    try {
+      final dbPath = join(await getDatabasesPath(), 'drophope.db');
+      final exportDir = await getExternalStorageDirectory();
+      final exportPath = join(exportDir!.path, 'drophope_export.db');
+      await File(dbPath).copy(exportPath);
+      dev.debugPrint('DatabaseHelper: Database exported to $exportPath');
+    } catch (e) {
+      dev.debugPrint('DatabaseHelper: Error exporting database: $e');
+    }
+  }
+
+  Future<void> _seedDataIfEmpty() async {
     final db = await database;
-    final itemCount =
+    final userCount =
         Sqflite.firstIntValue(
-          await db.rawQuery('SELECT COUNT(*) FROM items'),
+          await db.rawQuery('SELECT COUNT(*) FROM users'),
         ) ??
         0;
-    dev.debugPrint('DatabaseHelper: Item count from database: $itemCount');
-    if (itemCount == 0) {
-      dev.debugPrint('DatabaseHelper: No items found, seeding database');
+    dev.debugPrint('DatabaseHelper: User count from database: $userCount');
+    if (userCount == 0) {
+      dev.debugPrint('DatabaseHelper: No users found, seeding database');
       await _seedItems(db);
-      dev.debugPrint('DatabaseHelper: Seeding completed, verifying item count');
-      final newCount =
+      dev.debugPrint('DatabaseHelper: Seeding completed, verifying user count');
+      final newUserCount =
           Sqflite.firstIntValue(
-            await db.rawQuery('SELECT COUNT(*) FROM items'),
+            await db.rawQuery('SELECT COUNT(*) FROM users'),
           ) ??
           0;
-      dev.debugPrint('DatabaseHelper: New item count after seeding: $newCount');
+      dev.debugPrint(
+        'DatabaseHelper: New user count after seeding: $newUserCount',
+      );
     } else {
       dev.debugPrint(
-        'DatabaseHelper: Found $itemCount items, no seeding needed',
+        'DatabaseHelper: Found $userCount users, no seeding needed',
       );
     }
   }
@@ -66,7 +84,10 @@ class DatabaseHelper {
       CREATE TABLE users (
         email TEXT PRIMARY KEY,
         full_name TEXT NOT NULL,
-        password TEXT NOT NULL
+        password TEXT NOT NULL,
+        profile_picture TEXT,
+        account_type TEXT NOT NULL DEFAULT 'BASIC',
+        role TEXT NOT NULL DEFAULT 'user' -- Added role column
       )
     ''');
 
@@ -79,9 +100,21 @@ class DatabaseHelper {
         category TEXT NOT NULL,
         image_path TEXT,
         uploader_email TEXT NOT NULL,
-        uploader_name TEXT NOT NULL, -- Ensure column is created
+        uploader_name TEXT NOT NULL,
         phone TEXT,
         FOREIGN KEY (uploader_email) REFERENCES users(email)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reporter_email TEXT NOT NULL,
+        item_id INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Pending',
+        FOREIGN KEY (reporter_email) REFERENCES users(email),
+        FOREIGN KEY (item_id) REFERENCES items(id)
       )
     ''');
 
@@ -89,130 +122,439 @@ class DatabaseHelper {
     dev.debugPrint('DatabaseHelper: Tables created and seeded');
   }
 
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    dev.debugPrint(
+      'DatabaseHelper: Upgrading database from version $oldVersion to $newVersion',
+    );
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE users (
+          email TEXT PRIMARY KEY,
+          full_name TEXT NOT NULL,
+          password TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user' -- Added in migration
+        )
+      ''');
+      final existingItems = await db.query('items');
+      for (var item in existingItems) {
+        final uploaderEmail = item['uploader_email'] as String?;
+        if (uploaderEmail != null) {
+          final fullName =
+              uploaderEmail.split('@')[0].replaceAll('.', ' ').toTitleCase();
+          await db.insert('users', {
+            'email': uploaderEmail,
+            'full_name': fullName,
+            'password': 'defaultpass',
+            'role': 'user', // Default role for existing users
+          });
+        }
+      }
+    }
+    if (oldVersion < 3) {
+      dev.debugPrint(
+        'DatabaseHelper: Migrating to version 3, adding full_name column to users table',
+      );
+      final columns = await db.rawQuery('PRAGMA table_info(users)');
+      final hasFullNameColumn = columns.any(
+        (col) => col['name'] == 'full_name',
+      );
+      if (!hasFullNameColumn) {
+        await db.execute('ALTER TABLE users ADD COLUMN full_name TEXT');
+        dev.debugPrint('DatabaseHelper: Added full_name column to users table');
+        final users = await db.query('users');
+        for (var user in users) {
+          final email = user['email'] as String?;
+          if (email != null) {
+            final fullName =
+                email.split('@')[0].replaceAll('.', ' ').toTitleCase();
+            await db.update(
+              'users',
+              {'full_name': fullName},
+              where: 'email = ?',
+              whereArgs: [email],
+            );
+          }
+        }
+        dev.debugPrint('DatabaseHelper: Updated full_name for existing users');
+      }
+      await db.execute(
+        'UPDATE users SET full_name = "Unknown" WHERE full_name IS NULL',
+      );
+      dev.debugPrint(
+        'DatabaseHelper: Set default full_name for any null entries',
+      );
+    }
+    if (oldVersion < 4) {
+      dev.debugPrint(
+        'DatabaseHelper: Migrating to version 4, adding uploader_name to items table',
+      );
+      final columns = await db.rawQuery('PRAGMA table_info(items)');
+      final hasUploaderNameColumn = columns.any(
+        (col) => col['name'] == 'uploader_name',
+      );
+      if (!hasUploaderNameColumn) {
+        await db.execute(
+          'ALTER TABLE items ADD COLUMN uploader_name TEXT NOT NULL DEFAULT "Unknown"',
+        );
+        dev.debugPrint(
+          'DatabaseHelper: Added uploader_name column to items table',
+        );
+        final items = await db.query('items');
+        for (var item in items) {
+          final uploaderEmail = item['uploader_email'] as String?;
+          if (uploaderEmail != null) {
+            final user = await db.query(
+              'users',
+              where: 'email = ?',
+              whereArgs: [uploaderEmail],
+            );
+            final fullName =
+                user.isNotEmpty
+                    ? user.first['full_name'] as String? ?? 'Unknown'
+                    : 'Unknown';
+            await db.update(
+              'items',
+              {'uploader_name': fullName},
+              where: 'uploader_email = ?',
+              whereArgs: [uploaderEmail],
+            );
+          }
+        }
+        dev.debugPrint(
+          'DatabaseHelper: Updated uploader_name for existing items',
+        );
+      }
+    }
+    if (oldVersion < 5) {
+      dev.debugPrint(
+        'DatabaseHelper: Migrating to version 5, ensuring uploader_name is NOT NULL',
+      );
+      final columns = await db.rawQuery('PRAGMA table_info(items)');
+      final hasUploaderNameColumn = columns.any(
+        (col) => col['name'] == 'uploader_name',
+      );
+      if (!hasUploaderNameColumn) {
+        await db.execute(
+          'ALTER TABLE items ADD COLUMN uploader_name TEXT NOT NULL DEFAULT "Unknown"',
+        );
+        dev.debugPrint(
+          'DatabaseHelper: Added uploader_name column to items table in version 5',
+        );
+      }
+      await db.execute(
+        'UPDATE items SET uploader_name = "Unknown" WHERE uploader_name IS NULL',
+      );
+      final items = await db.query('items');
+      for (var item in items) {
+        final uploaderEmail = item['uploader_email'] as String?;
+        if (uploaderEmail != null) {
+          final user = await db.query(
+            'users',
+            where: 'email = ?',
+            whereArgs: [uploaderEmail],
+          );
+          final fullName =
+              user.isNotEmpty
+                  ? user.first['full_name'] as String? ?? 'Unknown'
+                  : 'Unknown';
+          await db.update(
+            'items',
+            {'uploader_name': fullName},
+            where: 'uploader_email = ?',
+            whereArgs: [uploaderEmail],
+          );
+        }
+      }
+      dev.debugPrint(
+        'DatabaseHelper: Ensured uploader_name for all items in version 5',
+      );
+    }
+    if (oldVersion < 6) {
+      dev.debugPrint(
+        'DatabaseHelper: Migrating to version 6, adding profile_picture to users table',
+      );
+      final columns = await db.rawQuery('PRAGMA table_info(users)');
+      final hasProfilePictureColumn = columns.any(
+        (col) => col['name'] == 'profile_picture',
+      );
+      if (!hasProfilePictureColumn) {
+        await db.execute('ALTER TABLE users ADD COLUMN profile_picture TEXT');
+        dev.debugPrint(
+          'DatabaseHelper: Added profile_picture column to users table',
+        );
+      }
+    }
+    if (oldVersion < 7) {
+      dev.debugPrint(
+        'DatabaseHelper: Migrating to version 7, adding account_type to users table',
+      );
+      final columns = await db.rawQuery('PRAGMA table_info(users)');
+      final hasAccountTypeColumn = columns.any(
+        (col) => col['name'] == 'account_type',
+      );
+      if (!hasAccountTypeColumn) {
+        await db.execute(
+          'ALTER TABLE users ADD COLUMN account_type TEXT NOT NULL DEFAULT "BASIC"',
+        );
+        dev.debugPrint(
+          'DatabaseHelper: Added account_type column to users table',
+        );
+      }
+      await db.execute(
+        'UPDATE users SET account_type = "BASIC" WHERE account_type IS NULL',
+      );
+      dev.debugPrint(
+        'DatabaseHelper: Set default account_type to BASIC for existing users',
+      );
+    }
+    if (oldVersion < 8) {
+      dev.debugPrint(
+        'DatabaseHelper: Migrating to version 8, adding reports table',
+      );
+      await db.execute('''
+        CREATE TABLE reports (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          reporter_email TEXT NOT NULL,
+          item_id INTEGER NOT NULL,
+          reason TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'Pending',
+          FOREIGN KEY (reporter_email) REFERENCES users(email),
+          FOREIGN KEY (item_id) REFERENCES items(id)
+        )
+      ''');
+      dev.debugPrint('DatabaseHelper: Added reports table in version 8');
+    }
+    if (oldVersion < 9) {
+      dev.debugPrint(
+        'DatabaseHelper: Migrating to version 9, adding role column to users table',
+      );
+      final columns = await db.rawQuery('PRAGMA table_info(users)');
+      final hasRoleColumn = columns.any((col) => col['name'] == 'role');
+      if (!hasRoleColumn) {
+        await db.execute(
+          'ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT "user"',
+        );
+        dev.debugPrint('DatabaseHelper: Added role column to users table');
+      }
+      await db.execute('UPDATE users SET role = "user" WHERE role IS NULL');
+      dev.debugPrint(
+        'DatabaseHelper: Set default role to user for existing users',
+      );
+    }
+  }
+
+  // Helper method to hash passwords using SHA-256
+  String _hashPassword(String password) {
+    var bytes = utf8.encode(password); // Convert string to bytes
+    var digest = sha256.convert(bytes); // Hash using SHA-256
+    return digest.toString(); // Return hexadecimal string
+  }
+
   Future<void> _seedItems(Database db) async {
-    // Insert users (unchanged from original)
+    // Seed admin user
+    await db.insert('users', {
+      'email': 'admin@drophope.com',
+      'full_name': 'Admin User',
+      'password': _hashPassword('adminpass123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'ADMIN',
+      'role': 'admin', // Set role to admin
+    });
+
+    // Seed regular users
     await db.insert('users', {
       'email': 'aya@example.com',
       'full_name': 'Aya',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'aymen@example.com',
       'full_name': 'Aymen',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'mohamed@example.com',
       'full_name': 'Mohamed',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'arwa@example.com',
       'full_name': 'Arwa',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'charlie@example.com',
       'full_name': 'Charlie',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'eve@example.com',
       'full_name': 'Eve',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'frank@example.com',
       'full_name': 'Frank',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'gina@example.com',
       'full_name': 'Gina',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'hank@example.com',
       'full_name': 'Hank',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'dave@example.com',
       'full_name': 'Dave',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'grace@example.com',
       'full_name': 'Grace',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'riyad@example.com',
       'full_name': 'Riyad',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'walid@example.com',
       'full_name': 'Walid',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'yacine@example.com',
       'full_name': 'Yacine',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'sahraoui@example.com',
       'full_name': 'Sahraoui',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'farid@example.com',
       'full_name': 'Farid',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'amine@example.com',
       'full_name': 'Amine',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'noah@example.com',
       'full_name': 'Noah',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'isabella@example.com',
       'full_name': 'Isabella',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'akrem@example.com',
       'full_name': 'Akrem',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'oumaima@example.com',
       'full_name': 'Oumaima',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'souhila@example.com',
       'full_name': 'Souhila',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'farouk@example.com',
       'full_name': 'Farouk',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
     await db.insert('users', {
       'email': 'tina@example.com',
       'full_name': 'Tina',
-      'password': 'password123',
+      'password': _hashPassword('password123'), // Hash the password
+      'profile_picture': null,
+      'account_type': 'BASIC',
+      'role': 'user',
     });
 
-    // Insert items (unchanged from original)
     await db.insert('items', {
       'title': 'Apples',
       'description': 'Fresh apples from my garden',
@@ -486,155 +828,6 @@ class DatabaseHelper {
     dev.debugPrint('DatabaseHelper: Seeding of 27 items completed');
   }
 
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    dev.debugPrint(
-      'DatabaseHelper: Upgrading database from version $oldVersion to $newVersion',
-    );
-    if (oldVersion < 2) {
-      await db.execute('''
-        CREATE TABLE users (
-          email TEXT PRIMARY KEY,
-          full_name TEXT NOT NULL,
-          password TEXT NOT NULL
-        )
-      ''');
-      final existingItems = await db.query('items');
-      for (var item in existingItems) {
-        final uploaderEmail = item['uploader_email'] as String?;
-        if (uploaderEmail != null) {
-          final fullName =
-              uploaderEmail.split('@')[0].replaceAll('.', ' ').toTitleCase();
-          await db.insert('users', {
-            'email': uploaderEmail,
-            'full_name': fullName,
-            'password': 'defaultpass',
-          });
-        }
-      }
-    }
-    if (oldVersion < 3) {
-      dev.debugPrint(
-        'DatabaseHelper: Migrating to version 3, adding full_name column to users table',
-      );
-      final columns = await db.rawQuery('PRAGMA table_info(users)');
-      final hasFullNameColumn = columns.any(
-        (col) => col['name'] == 'full_name',
-      );
-      if (!hasFullNameColumn) {
-        await db.execute('ALTER TABLE users ADD COLUMN full_name TEXT');
-        dev.debugPrint('DatabaseHelper: Added full_name column to users table');
-        final users = await db.query('users');
-        for (var user in users) {
-          final email = user['email'] as String?;
-          if (email != null) {
-            final fullName =
-                email.split('@')[0].replaceAll('.', ' ').toTitleCase();
-            await db.update(
-              'users',
-              {'full_name': fullName},
-              where: 'email = ?',
-              whereArgs: [email],
-            );
-          }
-        }
-        dev.debugPrint('DatabaseHelper: Updated full_name for existing users');
-      }
-      await db.execute(
-        'UPDATE users SET full_name = "Unknown" WHERE full_name IS NULL',
-      );
-      dev.debugPrint(
-        'DatabaseHelper: Set default full_name for any null entries',
-      );
-    }
-    if (oldVersion < 4) {
-      dev.debugPrint(
-        'DatabaseHelper: Migrating to version 4, adding uploader_name to items table',
-      );
-      final columns = await db.rawQuery('PRAGMA table_info(items)');
-      final hasUploaderNameColumn = columns.any(
-        (col) => col['name'] == 'uploader_name',
-      );
-      if (!hasUploaderNameColumn) {
-        await db.execute(
-          'ALTER TABLE items ADD COLUMN uploader_name TEXT NOT NULL DEFAULT "Unknown"',
-        );
-        dev.debugPrint(
-          'DatabaseHelper: Added uploader_name column to items table',
-        );
-        final items = await db.query('items');
-        for (var item in items) {
-          final uploaderEmail = item['uploader_email'] as String?;
-          if (uploaderEmail != null) {
-            final user = await db.query(
-              'users',
-              where: 'email = ?',
-              whereArgs: [uploaderEmail],
-            );
-            final fullName =
-                user.isNotEmpty
-                    ? user.first['full_name'] as String? ?? 'Unknown'
-                    : 'Unknown';
-            await db.update(
-              'items',
-              {'uploader_name': fullName},
-              where: 'uploader_email = ?',
-              whereArgs: [uploaderEmail],
-            );
-          }
-        }
-        dev.debugPrint(
-          'DatabaseHelper: Updated uploader_name for existing items',
-        );
-      }
-    }
-    if (oldVersion < 5) {
-      dev.debugPrint(
-        'DatabaseHelper: Migrating to version 5, ensuring uploader_name is NOT NULL',
-      );
-      final columns = await db.rawQuery('PRAGMA table_info(items)');
-      final hasUploaderNameColumn = columns.any(
-        (col) => col['name'] == 'uploader_name',
-      );
-      if (!hasUploaderNameColumn) {
-        await db.execute(
-          'ALTER TABLE items ADD COLUMN uploader_name TEXT NOT NULL DEFAULT "Unknown"',
-        );
-        dev.debugPrint(
-          'DatabaseHelper: Added uploader_name column to items table in version 5',
-        );
-      }
-      // Update any null uploader_name values
-      await db.execute(
-        'UPDATE items SET uploader_name = "Unknown" WHERE uploader_name IS NULL',
-      );
-      // Ensure all items have a valid uploader_name based on users table
-      final items = await db.query('items');
-      for (var item in items) {
-        final uploaderEmail = item['uploader_email'] as String?;
-        if (uploaderEmail != null) {
-          final user = await db.query(
-            'users',
-            where: 'email = ?',
-            whereArgs: [uploaderEmail],
-          );
-          final fullName =
-              user.isNotEmpty
-                  ? user.first['full_name'] as String? ?? 'Unknown'
-                  : 'Unknown';
-          await db.update(
-            'items',
-            {'uploader_name': fullName},
-            where: 'uploader_email = ?',
-            whereArgs: [uploaderEmail],
-          );
-        }
-      }
-      dev.debugPrint(
-        'DatabaseHelper: Ensured uploader_name for all items in version 5',
-      );
-    }
-  }
-
   Future<List<Map<String, dynamic>>> getAllItems() async {
     final db = await database;
     try {
@@ -687,8 +880,7 @@ class DatabaseHelper {
       'category': row['category'],
       'image_path': row['image_path'],
       'uploader_email': row['uploader_email'],
-      'uploader_name':
-          row['uploader_name'] ?? uploaderName, // Use provided or fallback
+      'uploader_name': row['uploader_name'] ?? uploaderName,
       'phone': row['phone'],
     };
     final id = await db.insert('items', updatedRow);
@@ -716,8 +908,7 @@ class DatabaseHelper {
       'category': row['category'],
       'image_path': row['image_path'],
       'uploader_email': row['uploader_email'],
-      'uploader_name':
-          row['uploader_name'] ?? uploaderName, // Use provided or fallback
+      'uploader_name': row['uploader_name'] ?? uploaderName,
       'phone': row['phone'],
     };
     final count = await db.update(
@@ -742,29 +933,181 @@ class DatabaseHelper {
   Future<int> insertUser(Map<String, dynamic> row) async {
     final db = await database;
     final fullName = row['full_name'] as String? ?? 'Unknown';
-    final updatedRow = {...row, 'full_name': fullName};
+    final password = row['password'] as String? ?? '';
+    final updatedRow = {
+      ...row,
+      'full_name': fullName,
+      'password': _hashPassword(password), // Hash the password
+      'profile_picture': row['profile_picture'],
+      'account_type': row['account_type'] ?? 'BASIC',
+      'role': row['role'] ?? 'user', // Ensure role is set
+    };
     final id = await db.insert(
       'users',
       updatedRow,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
     dev.debugPrint(
-      'DatabaseHelper: Inserted/updated user with email ${row['email']}, full_name: $fullName',
+      'DatabaseHelper: Inserted/updated user with email ${row['email']}, full_name: $fullName, profile_picture: ${row['profile_picture']}, account_type: ${updatedRow['account_type']}, role: ${updatedRow['role']}',
     );
     return id;
   }
 
+  Future<int> updateUserProfilePicture(
+    String email,
+    String? profilePicture,
+  ) async {
+    final db = await database;
+    final count = await db.update(
+      'users',
+      {'profile_picture': profilePicture},
+      where: 'email = ?',
+      whereArgs: [email],
+    );
+    dev.debugPrint(
+      'DatabaseHelper: Updated profile picture for email $email to $profilePicture, affected rows: $count',
+    );
+    return count;
+  }
+
+  Future<int> updateUserAccountType(String email, String accountType) async {
+    final db = await database;
+    final count = await db.update(
+      'users',
+      {'account_type': accountType},
+      where: 'email = ?',
+      whereArgs: [email],
+    );
+    dev.debugPrint(
+      'DatabaseHelper: Updated account type for email $email to $accountType, affected rows: $count',
+    );
+    return count;
+  }
+
   Future<Map<String, dynamic>?> getUser(String email, String password) async {
     final db = await database;
+    final hashedPassword = _hashPassword(password); // Hash the input password
     final result = await db.query(
       'users',
       where: 'email = ? AND password = ?',
-      whereArgs: [email, password],
+      whereArgs: [email, hashedPassword],
     );
     dev.debugPrint(
       'DatabaseHelper: User query returned ${result.length} result(s) for email $email',
     );
     return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<Map<String, dynamic>?> getUserByEmail(String email) async {
+    final db = await database;
+    final result = await db.query(
+      'users',
+      where: 'email = ?',
+      whereArgs: [email],
+    );
+    dev.debugPrint(
+      'DatabaseHelper: getUserByEmail returned ${result.length} result(s) for email $email: $result',
+    );
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<List<Map<String, dynamic>>> queryUsers() async {
+    final db = await database;
+    try {
+      final result = await db.query('users');
+      dev.debugPrint(
+        'DatabaseHelper: Retrieved ${result.length} users from database',
+      );
+      return result;
+    } catch (e) {
+      dev.debugPrint('DatabaseHelper: Error in queryUsers: $e');
+      return [];
+    }
+  }
+
+  Future<int> updateUser(String oldEmail, Map<String, dynamic> row) async {
+    final db = await database;
+    final count = await db.update(
+      'users',
+      row,
+      where: 'email = ?',
+      whereArgs: [oldEmail],
+    );
+    // If email changed, update related items and reports
+    if (row['email'] != oldEmail) {
+      await db.update(
+        'items',
+        {'uploader_email': row['email']},
+        where: 'uploader_email = ?',
+        whereArgs: [oldEmail],
+      );
+      await db.update(
+        'reports',
+        {'reporter_email': row['email']},
+        where: 'reporter_email = ?',
+        whereArgs: [oldEmail],
+      );
+    }
+    dev.debugPrint(
+      'DatabaseHelper: Updated $count user(s) with email $oldEmail',
+    );
+    return count;
+  }
+
+  Future<int> deleteUser(String email) async {
+    final db = await database;
+    // Delete related items and reports first
+    await db.delete('items', where: 'uploader_email = ?', whereArgs: [email]);
+    await db.delete('reports', where: 'reporter_email = ?', whereArgs: [email]);
+    final count = await db.delete(
+      'users',
+      where: 'email = ?',
+      whereArgs: [email],
+    );
+    dev.debugPrint('DatabaseHelper: Deleted $count user(s) with email $email');
+    return count;
+  }
+
+  Future<List<Map<String, dynamic>>> getAllReports() async {
+    final db = await database;
+    try {
+      final result = await db.query('reports');
+      dev.debugPrint(
+        'DatabaseHelper: Retrieved ${result.length} reports from database',
+      );
+      return result;
+    } catch (e) {
+      dev.debugPrint('DatabaseHelper: Error in getAllReports: $e');
+      return [];
+    }
+  }
+
+  Future<int> insertReport(Map<String, dynamic> row) async {
+    final db = await database;
+    final id = await db.insert('reports', row);
+    dev.debugPrint('DatabaseHelper: Inserted report with id $id');
+    return id;
+  }
+
+  Future<int> updateReportStatus(int id, String status) async {
+    final db = await database;
+    final count = await db.update(
+      'reports',
+      {'status': status},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    dev.debugPrint(
+      'DatabaseHelper: Updated $count report(s) with id $id to status $status',
+    );
+    return count;
+  }
+
+  Future<int> deleteReport(int id) async {
+    final db = await database;
+    final count = await db.delete('reports', where: 'id = ?', whereArgs: [id]);
+    dev.debugPrint('DatabaseHelper: Deleted $count report(s) with id $id');
+    return count;
   }
 }
 

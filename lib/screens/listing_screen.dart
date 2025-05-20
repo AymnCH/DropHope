@@ -203,6 +203,38 @@ class _ListingScreenState extends State<ListingScreen> {
     );
   }
 
+  void _showDeleteConfirmationDialog(Item item) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text("Delete Item"),
+          content: Text("Are you sure you want to delete '${item.title}'?"),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () {
+                if (item.id != null) {
+                  final provider = ItemProviderInherited.of(context);
+                  if (provider != null) {
+                    provider.deleteItem(item.id!);
+                  }
+                }
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text("Delete", style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final itemProvider = ItemProviderInherited.of(context);
@@ -213,100 +245,115 @@ class _ListingScreenState extends State<ListingScreen> {
       return const Scaffold(body: Center(child: Text('Provider not found')));
     }
 
-    return ListenableBuilder(
-      listenable: itemProvider,
-      builder: (context, _) {
-        final userItems =
-            itemProvider.items
-                .where((item) => item.uploaderEmail == userProvider.email)
-                .toList();
-        debugPrint(
-          'ListingScreen: User email: ${userProvider.email}, Total items: ${itemProvider.items.length}, User items: ${userItems.length}, Titles: ${userItems.map((i) => i.title).toList()}',
-        );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        image: DecorationImage(
+          image: const AssetImage('assets/images/background.png'),
+          fit: BoxFit.cover,
+          colorFilter: ColorFilter.mode(
+            Colors.black.withOpacity(0.5),
+            BlendMode.dstATop,
+          ),
+          onError: (exception, stackTrace) {
+            debugPrint('Error loading background image: $exception');
+            debugPrint('Stack trace: $stackTrace');
+          },
+        ),
+      ),
+      child: ListenableBuilder(
+        listenable: itemProvider,
+        builder: (context, _) {
+          final userItems =
+              itemProvider.items
+                  .where((item) => item.uploaderEmail == userProvider.email)
+                  .toList();
+          debugPrint(
+            'ListingScreen: User email: ${userProvider.email}, Total items: ${itemProvider.items.length}, User items: ${userItems.length}, Titles: ${userItems.map((i) => i.title).toList()}',
+          );
 
-        return Scaffold(
-          appBar: AppBar(title: const Text('My Listings')),
-          body:
-              userItems.isEmpty
-                  ? const Center(child: Text('No listings found'))
-                  : ListView.builder(
-                    padding: const EdgeInsets.all(16.0),
-                    itemCount: userItems.length,
-                    itemBuilder: (context, index) {
-                      final item = userItems[index];
-                      debugPrint(
-                        'ListingScreen: Displaying item ${item.title}, uploaderEmail: ${item.uploaderEmail}',
-                      );
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: ListTile(
-                          leading:
-                              item.imagePath != null
-                                  ? item.imagePath!.startsWith('assets/')
-                                      ? Image.asset(
-                                        item.imagePath!,
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (
-                                          context,
-                                          error,
-                                          stackTrace,
-                                        ) {
-                                          debugPrint(
-                                            'Error loading image: $error',
-                                          );
-                                          return const Icon(
-                                            Icons.image_not_supported,
-                                          );
-                                        },
-                                      )
-                                      : Image.file(
-                                        File(item.imagePath!),
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (
-                                          context,
-                                          error,
-                                          stackTrace,
-                                        ) {
-                                          debugPrint(
-                                            'Error loading image: $error',
-                                          );
-                                          return const Icon(
-                                            Icons.image_not_supported,
-                                          );
-                                        },
-                                      )
-                                  : const Icon(Icons.image_not_supported),
-                          title: Text(item.title),
-                          subtitle: Text(item.description),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.edit),
-                                onPressed: () {
-                                  _showEditDialog(item);
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete),
-                                onPressed: () {
-                                  if (item.id != null) {
-                                    itemProvider.deleteItem(item.id!);
-                                  }
-                                },
-                              ),
-                            ],
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: AppBar(title: const Text('My Listings')),
+            body:
+                userItems.isEmpty
+                    ? const Center(child: Text('No listings found'))
+                    : ListView.builder(
+                      padding: const EdgeInsets.all(16.0),
+                      itemCount: userItems.length,
+                      itemBuilder: (context, index) {
+                        final item = userItems[index];
+                        debugPrint(
+                          'ListingScreen: Displaying item ${item.title}, uploaderEmail: ${item.uploaderEmail}',
+                        );
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: ListTile(
+                            leading:
+                                item.imagePath != null
+                                    ? item.imagePath!.startsWith('assets/')
+                                        ? Image.asset(
+                                          item.imagePath!,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (
+                                            context,
+                                            error,
+                                            stackTrace,
+                                          ) {
+                                            debugPrint(
+                                              'Error loading image: $error',
+                                            );
+                                            return const Icon(
+                                              Icons.image_not_supported,
+                                            );
+                                          },
+                                        )
+                                        : Image.file(
+                                          File(item.imagePath!),
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (
+                                            context,
+                                            error,
+                                            stackTrace,
+                                          ) {
+                                            debugPrint(
+                                              'Error loading image: $error',
+                                            );
+                                            return const Icon(
+                                              Icons.image_not_supported,
+                                            );
+                                          },
+                                        )
+                                    : const Icon(Icons.image_not_supported),
+                            title: Text(item.title),
+                            subtitle: Text(item.description),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  onPressed: () {
+                                    _showEditDialog(item);
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  onPressed: () {
+                                    _showDeleteConfirmationDialog(item);
+                                  },
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-        );
-      },
+                        );
+                      },
+                    ),
+          );
+        },
+      ),
     );
   }
 }

@@ -1,4 +1,6 @@
+import 'package:drophope/main.dart';
 import 'package:flutter/material.dart';
+import 'package:drophope/database_helper.dart';
 
 class UserProvider extends InheritedWidget {
   final String? email;
@@ -6,6 +8,7 @@ class UserProvider extends InheritedWidget {
   final String accountType;
   final String? profilePicture;
   final int freeItemsPostedThisMonth;
+  final String? role; // Add role field
 
   const UserProvider({
     super.key,
@@ -15,11 +18,14 @@ class UserProvider extends InheritedWidget {
     required this.accountType,
     this.profilePicture,
     this.freeItemsPostedThisMonth = 0,
+    this.role,
   });
 
   static UserProvider? of(BuildContext context) {
     return context.dependOnInheritedWidgetOfExactType<UserProvider>();
   }
+
+  bool get isAdmin => role == 'admin'; // Getter to check if user is admin
 
   @override
   bool updateShouldNotify(UserProvider oldWidget) {
@@ -27,7 +33,8 @@ class UserProvider extends InheritedWidget {
         username != oldWidget.username ||
         accountType != oldWidget.accountType ||
         profilePicture != oldWidget.profilePicture ||
-        freeItemsPostedThisMonth != oldWidget.freeItemsPostedThisMonth;
+        freeItemsPostedThisMonth != oldWidget.freeItemsPostedThisMonth ||
+        role != oldWidget.role;
   }
 }
 
@@ -36,36 +43,41 @@ class UserState extends StatefulWidget {
 
   const UserState({super.key, required this.child});
 
-  // Add a static method to access the state
-  static _UserStateState? of(BuildContext context) {
-    return context.findAncestorStateOfType<_UserStateState>();
+  static UserStateState? of(BuildContext context) {
+    return userStateKey.currentState;
   }
 
   @override
-  State<UserState> createState() => _UserStateState();
+  State<UserState> createState() => UserStateState();
 }
 
-class _UserStateState extends State<UserState> {
+class UserStateState extends State<UserState> {
   String? _email;
   String _username = "Guest";
-  String _accountType = "Basic";
+  String _accountType = "BASIC";
   String? _profilePicture;
   int _freeItemsPostedThisMonth = 0;
+  String? _role; // Add role field
 
   String? get email => _email;
   String get username => _username;
   String get accountType => _accountType;
   String? get profilePicture => _profilePicture;
   int get freeItemsPostedThisMonth => _freeItemsPostedThisMonth;
+  String? get role => _role; // Getter for role
+  bool get isAdmin => _role == 'admin'; // Getter to check if user is admin
 
-  void login(String email) {
+  Future<void> login(String email) async {
+    final dbHelper = DatabaseHelper.instance;
+    final user = await dbHelper.getUserByEmail(email);
     setState(() {
       _email = email;
-      _username = email.split('@')[0];
-      _accountType = "PRO";
-      _profilePicture = null;
+      _username = user?['full_name'] ?? email.split('@')[0];
+      _accountType = user?['account_type'] ?? "BASIC";
+      _profilePicture = user?['profile_picture'];
+      _role = user?['role'] ?? 'user'; // Fetch role from database
       debugPrint(
-        'UserState: Logged in with email: $email, username: $_username',
+        'UserState: Logged in with email: $email, username: $_username, accountType: $_accountType, profilePicture: $_profilePicture, role: $_role',
       );
     });
   }
@@ -74,24 +86,31 @@ class _UserStateState extends State<UserState> {
     setState(() {
       _email = null;
       _username = "Guest";
-      _accountType = "Basic";
+      _accountType = "BASIC";
       _profilePicture = null;
       _freeItemsPostedThisMonth = 0;
+      _role = null; // Reset role on logout
       debugPrint('UserState: Logged out, email reset to null');
     });
   }
 
-  void updateProfile({
+  Future<void> updateProfile({
     String? username,
     String? accountType,
     String? profilePicture,
-  }) {
+    String? role, // Add role parameter for updates if needed
+  }) async {
+    if (profilePicture != null && _email != null) {
+      final dbHelper = DatabaseHelper.instance;
+      await dbHelper.updateUserProfilePicture(_email!, profilePicture);
+    }
     setState(() {
       _username = username ?? _username;
       _accountType = accountType ?? _accountType;
       _profilePicture = profilePicture ?? _profilePicture;
+      _role = role ?? _role; // Update role if provided
       debugPrint(
-        'UserState: Profile updated, username: $_username, accountType: $_accountType',
+        'UserState: Profile updated, username: $_username, accountType: $_accountType, profilePicture: $_profilePicture, role: $_role',
       );
     });
   }
@@ -105,7 +124,11 @@ class _UserStateState extends State<UserState> {
     });
   }
 
-  void updateAccountType(String newAccountType) {
+  Future<void> updateAccountType(String newAccountType) async {
+    if (_email != null) {
+      final dbHelper = DatabaseHelper.instance;
+      await dbHelper.updateUserAccountType(_email!, newAccountType);
+    }
     setState(() {
       _accountType = newAccountType;
       debugPrint('UserState: Account type updated to: $_accountType');
@@ -114,13 +137,16 @@ class _UserStateState extends State<UserState> {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('UserState: Building with email: $_email, username: $_username');
+    debugPrint(
+      'UserState: Building with email: $_email, username: $_username, accountType: $_accountType, profilePicture: $_profilePicture, role: $_role',
+    );
     return UserProvider(
       email: _email,
       username: _username,
       accountType: _accountType,
       profilePicture: _profilePicture,
       freeItemsPostedThisMonth: _freeItemsPostedThisMonth,
+      role: _role, // Pass role to UserProvider
       child: widget.child,
     );
   }

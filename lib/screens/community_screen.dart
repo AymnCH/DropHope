@@ -13,8 +13,8 @@ class CommunityScreen extends StatefulWidget {
           state._showAddPostDialog();
         }
       },
-      backgroundColor: Colors.indigo,
-      child: const Icon(Icons.add),
+      backgroundColor: const Color.fromRGBO(6, 135, 203, 1),
+      child: const Icon(Icons.add, color: Colors.white),
     );
   }
 
@@ -38,7 +38,6 @@ class _CommunityScreenState extends State<CommunityScreen> {
     },
     {
       "username": "Aymen",
-
       "time": "2 hours ago",
       "content":
           "I liked the way they organized the event, it was very informative.",
@@ -86,52 +85,63 @@ class _CommunityScreenState extends State<CommunityScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text("Create a Post"),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      decoration: const InputDecoration(
-                        labelText: "What's on your mind?",
-                      ),
-                      onChanged: (value) {
-                        content = value;
-                      },
-                      maxLines: 3,
+              content: SizedBox(
+                width:
+                    MediaQuery.of(context).size.width *
+                    0.9, // 80% of screen width
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextField(
+                          decoration: const InputDecoration(
+                            labelText: "What's on your mind?",
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (value) {
+                            content = value;
+                          },
+                          maxLines: 5,
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: () async {
+                            final picker = ImagePicker();
+                            final pickedFile = await picker.pickImage(
+                              source: ImageSource.gallery,
+                            );
+                            if (pickedFile != null) {
+                              setDialogState(() {
+                                imageFile = File(pickedFile.path);
+                                imagePath = pickedFile.path;
+                                imageSelected = true;
+                              });
+                            }
+                          },
+                          child: const Text("Upload Photo"),
+                        ),
+                        if (imageSelected && imageFile != null) ...[
+                          const SizedBox(height: 16),
+                          Image.file(
+                            imageFile!,
+                            height: 150, // Increased height for larger preview
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              debugPrint(
+                                'Error loading uploaded image: $error',
+                              );
+                              return const Text(
+                                "Image Preview Not Available",
+                                style: TextStyle(color: Colors.grey),
+                              );
+                            },
+                          ),
+                        ],
+                      ],
                     ),
-                    const SizedBox(height: 10),
-                    ElevatedButton(
-                      onPressed: () async {
-                        final picker = ImagePicker();
-                        final pickedFile = await picker.pickImage(
-                          source: ImageSource.gallery,
-                        );
-                        if (pickedFile != null) {
-                          setDialogState(() {
-                            imageFile = File(pickedFile.path);
-                            imagePath = pickedFile.path;
-                            imageSelected = true;
-                          });
-                        }
-                      },
-                      child: const Text("Upload Photo"),
-                    ),
-                    if (imageSelected && imageFile != null) ...[
-                      const SizedBox(height: 10),
-                      Image.file(
-                        imageFile!,
-                        height: 100,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          debugPrint('Error loading uploaded image: $error');
-                          return const Text(
-                            "Image Preview Not Available",
-                            style: TextStyle(color: Colors.grey),
-                          );
-                        },
-                      ),
-                    ],
-                  ],
+                  ),
                 ),
               ),
               actions: [
@@ -160,45 +170,68 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildTabButton("Posts", 0),
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _selectedTab = 1;
-                  });
-                },
-                child: const Row(
-                  children: [
-                    Text("View FAQs", style: TextStyle(color: Colors.indigo)),
-                    SizedBox(width: 4),
-                    Icon(Icons.help_outline, color: Colors.indigo),
-                  ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        image: DecorationImage(
+          image: const AssetImage('assets/images/background.png'),
+          fit: BoxFit.cover,
+          colorFilter: ColorFilter.mode(
+            Colors.black.withOpacity(0.5), // Semi-transparent overlay
+            BlendMode.dstATop,
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 8.0,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildTabButton("Posts", 0),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedTab = 1;
+                    });
+                  },
+                  child: const Row(
+                    children: [
+                      Text(
+                        "View FAQs",
+                        style: TextStyle(color: Color.fromRGBO(7, 67, 116, 1)),
+                      ),
+                      SizedBox(width: 4),
+                      Icon(
+                        Icons.help_outline,
+                        color: Color.fromRGBO(7, 67, 116, 1),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: DropdownButton<String>(
-            value: 'Category',
-            items: const [
-              DropdownMenuItem(value: 'Category', child: Text('Category')),
-            ],
-            onChanged: (value) {},
-            underline: Container(),
-            icon: const Icon(Icons.arrow_drop_down),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: DropdownButton<String>(
+              value: 'Category',
+              items: const [
+                DropdownMenuItem(value: 'Category', child: Text('Category')),
+              ],
+              onChanged: (value) {},
+              underline: Container(),
+              icon: const Icon(Icons.arrow_drop_down),
+            ),
           ),
-        ),
-        Expanded(child: _selectedTab == 0 ? _buildPostsTab() : _buildFAQsTab()),
-      ],
+          Expanded(
+            child: _selectedTab == 0 ? _buildPostsTab() : _buildFAQsTab(),
+          ),
+        ],
+      ),
     );
   }
 
@@ -214,7 +247,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
-              color: _selectedTab == index ? Colors.indigo : Colors.transparent,
+              color:
+                  _selectedTab == index
+                      ? Color.fromRGBO(7, 134, 203, 1)
+                      : Colors.transparent,
               width: 2,
             ),
           ),
@@ -224,7 +260,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
-            color: _selectedTab == index ? Colors.indigo : Colors.grey,
+            color:
+                _selectedTab == index
+                    ? Color.fromRGBO(7, 134, 203, 1)
+                    : Colors.grey,
           ),
         ),
       ),
@@ -246,9 +285,14 @@ class _CommunityScreenState extends State<CommunityScreen> {
               children: [
                 Row(
                   children: [
-                    const CircleAvatar(
+                    CircleAvatar(
                       radius: 20,
                       backgroundColor: Colors.grey,
+                      child: const Icon(
+                        Icons.person,
+                        size: 30,
+                        color: Colors.white,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
